@@ -143,3 +143,40 @@ def pack_not_found(short: str) -> str:
 def single_emoji(info: EmojiInfo) -> str:
     """A standalone, send-ready block for one emoji (used by inline mode)."""
     return f"{SPARK} {_emoji_line(info)}"
+
+
+
+def _bar(frac: float, width: int = 14) -> str:
+    frac = max(0.0, min(1.0, frac))
+    filled = int(round(frac * width))
+    return "\u2588" * filled + "\u2591" * (width - filled)
+
+
+def humanize_eta(seconds: float) -> str:
+    if seconds != seconds or seconds < 0:  # NaN / negative guard
+        return "\u2026"
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    m, s = divmod(seconds, 60)
+    if m < 60:
+        return f"{m}m {s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h {m:02d}m"
+
+
+def progress_text(label: str, done: int, total: int, elapsed: float) -> str:
+    """A premium progress card: bar + percent + rate + ETA."""
+    frac = (done / total) if total else 0.0
+    pct = int(frac * 100)
+    if done and elapsed > 0:
+        rate = done / elapsed
+        eta = humanize_eta((total - done) / rate) if rate > 0 else "\u2026"
+        rate_s = f"{rate:.0f}/s"
+    else:
+        eta, rate_s = "\u2026", "\u2026"
+    return (
+        f"{SPARK} <b>{esc(label)}</b>  {done}/{total}\n"
+        f"<code>[{_bar(frac)}] {pct:3d}%</code>\n"
+        f"<blockquote>{rate_s}{DOT}ETA {eta}</blockquote>"
+    )

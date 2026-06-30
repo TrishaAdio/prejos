@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import tempfile
+import time
 
 from pyrogram import filters
 from pyrogram.enums import ParseMode
@@ -13,12 +14,20 @@ from pyrogram.enums import ParseMode
 from core.emoji import EmojiInfo, fetch_pack
 from core.sheet import render_sheets
 from handlers.util import allowed, safe_reply
-from ui.text import esc, pack_not_found
+from ui.text import esc, pack_not_found, progress_text
 
 HTML = ParseMode.HTML
 COLS = 10
 CELL = 90
 CONCURRENCY = 8
+TICK = 1.8  # seconds between progress-bar refreshes
+
+
+async def _edit(message, text: str) -> None:
+    try:
+        await message.edit_text(text, parse_mode=HTML, disable_web_page_preview=True)
+    except Exception:  # noqa: BLE001  (ignore MESSAGE_NOT_MODIFIED / flood)
+        pass
 
 
 async def _download(client, info: EmojiInfo, sem: asyncio.Semaphore) -> bytes | None:
@@ -62,14 +71,34 @@ def register(app) -> None:
             await status.edit_text(pack_not_found(short), parse_mode=HTML)
             return
 
-        await status.edit_text(
-            f"Downloading <b>{len(infos)}</b> icons from <code>{esc(short)}</code> \u2026",
-            parse_mode=HTML,
-        )
+        # Download every thumbnail concurrently, with a live progress bar + ETA.
+        total = len(infos)
+        results: list[bytes | None] = [None] * total
         sem = asyncio.Semaphore(CONCURRENCY)
-        blobs = await asyncio.gather(*[_download(client, i, sem) for i in infos])
+        done = 0
+        start_t = time.monotonic()
 
-        await status.edit_text("Building the sheet \u2026", parse_mode=HTML)
+        async def _worker(idx: int, info: EmojiInfo) -> None:
+            nonlocal done
+            results[idx] = await _download(client, info, sem)
+            done += 1
+
+        tasks = [asyncio.create_task(_worker(i, info)) for i, info in enumerate(infos)]
+
+        async def _monitor() -> None:
+            while done < total:
+                await asyncio.sleep(TICK)
+                await _edit(status, progress_text("Downloading", done, total, time.monotonic() - start_t))
+
+        mon = asyncio.create_task(_monitor())
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            mon.cancel()
+        await _edit(status, progress_text("Downloading", total, total, time.monotonic() - start_t))
+        blobs = results
+
+        await _edit(status, "Building the sheet \u2026")
         items = [(blob, info.id_str[-12:]) for blob, info in zip(blobs, infos)]
         sheets = await asyncio.to_thread(render_sheets, items, cols=COLS, cell=CELL)
 
@@ -101,7 +130,7 @@ def register(app) -> None:
                 for info in infos:
                     f.write(f'"{info.slug}": ("{info.id_str}", "{info.emoji}"),\n')
 
-            await status.edit_text(f"Uploading {len(sheet_paths)} sheet(s) \u2026", parse_mode=HTML)
+            await _edit(status, f"Uploading {len(sheet_paths)} sheet(s) \u2026")
             for i, p in enumerate(sheet_paths, 1):
                 cap = (
                     f"{esc(short)} \u2014 {len(infos)} icons. Labels show the last 12 "
