@@ -12,7 +12,7 @@ HTML = ParseMode.HTML
 
 
 def register(app) -> None:
-    @app.on_message(filters.private & ~filters.command(["start", "help", "pack"]))
+    @app.on_message(filters.private & ~filters.command(["start", "help", "pack", "sheet"]))
     async def _resolve(client, message):
         if not allowed(message.from_user.id if message.from_user else None):
             return

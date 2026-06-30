@@ -18,6 +18,8 @@ class EmojiInfo:
     id: int
     emoji: str          # the associated base glyph (NOT unique across icons)
     set_name: str       # pack short name, if known
+    file_id: str = ""        # downloadable id for the sticker itself
+    thumb_file_id: str = ""  # downloadable id for a static thumbnail
 
     @property
     def id_str(self) -> str:
@@ -39,11 +41,16 @@ async def _parse_documents(client, documents) -> list[EmojiInfo]:
     for item in documents:
         emoji = ""
         set_name = ""
+        file_id = ""
+        thumb_file_id = ""
         try:
             attrs = {type(a): a for a in item.attributes}
             sticker = await types.Sticker._parse(client, item, attrs)
             emoji = sticker.emoji or ""
             set_name = sticker.set_name or ""
+            file_id = sticker.file_id or ""
+            thumbs = sticker.thumbs or []
+            thumb_file_id = thumbs[-1].file_id if thumbs else ""
         except Exception:  # noqa: BLE001
             ce_attr = next(
                 (a for a in item.attributes
@@ -52,7 +59,15 @@ async def _parse_documents(client, documents) -> list[EmojiInfo]:
             )
             if ce_attr:
                 emoji = getattr(ce_attr, "alt", "") or ""
-        out.append(EmojiInfo(id=item.id, emoji=emoji, set_name=set_name))
+        out.append(
+            EmojiInfo(
+                id=item.id,
+                emoji=emoji,
+                set_name=set_name,
+                file_id=file_id,
+                thumb_file_id=thumb_file_id,
+            )
+        )
     return out
 
 
