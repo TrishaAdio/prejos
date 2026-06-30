@@ -10,6 +10,7 @@ import time
 
 from pyrogram import filters
 from pyrogram.enums import ParseMode
+from pyrogram.errors import FloodWait
 
 from core.emoji import EmojiInfo, fetch_pack
 from core.sheet import render_sheets
@@ -19,7 +20,7 @@ from ui.text import esc, pack_not_found, progress_text
 HTML = ParseMode.HTML
 COLS = 10
 CELL = 90
-CONCURRENCY = 8
+CONCURRENCY = 4
 TICK = 1.8  # seconds between progress-bar refreshes
 
 
@@ -35,12 +36,20 @@ async def _download(client, info: EmojiInfo, sem: asyncio.Semaphore) -> bytes | 
     if not fid:
         return None
     async with sem:
-        try:
-            bio = await client.download_media(fid, in_memory=True)
-            bio.seek(0)
-            return bio.read()
-        except Exception:  # noqa: BLE001
-            return None
+        for attempt in range(2):
+            try:
+                bio = await client.download_media(fid, in_memory=True)
+                bio.seek(0)
+                return bio.read()
+            except FloodWait as exc:
+                wait = int(getattr(exc, "value", 0) or 0)
+                if attempt == 0 and 0 < wait <= 30:
+                    await asyncio.sleep(wait + 1)
+                    continue
+                return None
+            except Exception:  # noqa: BLE001
+                return None
+    return None
 
 
 def register(app) -> None:
@@ -78,12 +87,19 @@ def register(app) -> None:
         done = 0
         start_t = time.monotonic()
 
+        # Warm up the media-DC session with ONE serial download first. This avoids
+        # a burst of simultaneous auth.ExportAuthorization calls (which Telegram
+        # rate-limits with long FloodWaits) when many downloads start at once.
+        await _edit(status, progress_text("Downloading", 0, total, 0.0))
+        results[0] = await _download(client, infos[0], sem)
+        done = 1
+
         async def _worker(idx: int, info: EmojiInfo) -> None:
             nonlocal done
             results[idx] = await _download(client, info, sem)
             done += 1
 
-        tasks = [asyncio.create_task(_worker(i, info)) for i, info in enumerate(infos)]
+        tasks = [asyncio.create_task(_worker(i, infos[i])) for i in range(1, total)]
 
         async def _monitor() -> None:
             while done < total:
@@ -92,7 +108,8 @@ def register(app) -> None:
 
         mon = asyncio.create_task(_monitor())
         try:
-            await asyncio.gather(*tasks)
+            if tasks:
+                await asyncio.gather(*tasks)
         finally:
             mon.cancel()
         await _edit(status, progress_text("Downloading", total, total, time.monotonic() - start_t))
