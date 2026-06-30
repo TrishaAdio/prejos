@@ -23,8 +23,8 @@ from handlers.util import allowed, safe_reply
 from ui.text import esc, pack_not_found, progress_text
 
 HTML = ParseMode.HTML
-COLS = 10
-CELL = 90
+COLS = 8
+CELL = 100
 CONCURRENCY = 8          # HTTP downloads — safe, no ExportAuthorization
 TICK = 1.8               # progress-bar refresh interval
 STALE_AFTER = 90         # ignore commands older than this (drops restart backlog)
@@ -128,7 +128,7 @@ async def _run(message, short: str) -> None:
     await _edit(status, progress_text("Downloading", total, total, time.monotonic() - start_t))
 
     await _edit(status, "Building the sheet \u2026")
-    items = [(blob, info.id_str[-12:]) for blob, info in zip(results, infos)]
+    items = [(blob, info.id_str) for blob, info in zip(results, infos)]
     sheets = await asyncio.to_thread(render_sheets, items, cols=COLS, cell=CELL)
 
     with tempfile.TemporaryDirectory() as td:
@@ -156,8 +156,8 @@ async def _run(message, short: str) -> None:
         await _edit(status, f"Uploading {len(sheet_paths)} sheet(s) \u2026")
         for i, p in enumerate(sheet_paths, 1):
             cap = (
-                f"{esc(short)} \u2014 {total} icons. Labels show the last 12 digits; "
-                f"full ids are in the mapping files."
+                f"{esc(short)} \u2014 {total} icons. Full id under each icon "
+                f"(two lines); mapping files included."
                 if i == 1 else None
             )
             await botapi.send_document(message.chat.id, p, caption=cap, reply_to=message.id)

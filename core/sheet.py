@@ -41,42 +41,71 @@ def _placeholder(cell: int, label: str, font) -> Image.Image:
     return canvas
 
 
+def _wrap_id(label: str, font, max_w: int) -> list[str]:
+    """Split a long numeric id into lines that each fit within max_w pixels."""
+    if not label:
+        return [""]
+    # find how many chars fit per line at this font
+    per = len(label)
+    while per > 1 and font.getlength("0" * per) > max_w:
+        per -= 1
+    if per >= len(label):
+        return [label]
+    return [label[i : i + per] for i in range(0, len(label), per)]
+
+
 def render_sheets(
     items: list[tuple[bytes | None, str]],
     *,
-    cols: int = 10,
-    cell: int = 90,
+    cols: int = 8,
+    cell: int = 100,
     max_rows: int = 24,
     bg=(24, 24, 24, 255),
 ) -> list[Image.Image]:
-    """items: list of (icon_bytes_or_None, label). Returns RGB sheet images."""
-    font = _load_font(max(11, cell // 8))
-    pad = 8
-    label_h = max(14, cell // 6)
-    cw = cell + pad
-    ch = cell + label_h + pad
+    """items: list of (icon_bytes_or_None, full_id_label). Returns RGB sheet images.
 
-    cells: list[tuple[Image.Image, str]] = []
+    The full id is printed under each icon, wrapped across as many lines as needed.
+    """
+    font = _load_font(max(11, cell // 9))
+    pad = 8
+    try:
+        line_h = font.getbbox("0")[3] + 2
+    except Exception:  # noqa: BLE001
+        line_h = max(12, cell // 8)
+    max_label_w = cell + pad - 2
+
+    # Decode icons + pre-wrap every label so we know the tallest label block.
+    decoded: list[tuple[Image.Image, list[str]]] = []
+    max_lines = 1
     for blob, label in items:
         try:
             img = _decode(blob, cell) if blob else _placeholder(cell, "?", font)
         except Exception:  # noqa: BLE001
             img = _placeholder(cell, "?", font)
-        cells.append((img, label))
+        lines = _wrap_id(label, font, max_label_w)
+        max_lines = max(max_lines, len(lines))
+        decoded.append((img, lines))
+
+    label_h = max_lines * line_h + 4
+    cw = cell + pad
+    ch = cell + label_h + pad
 
     sheets: list[Image.Image] = []
     per_sheet = cols * max_rows
-    for start in range(0, len(cells), per_sheet):
-        chunk = cells[start : start + per_sheet]
+    for start in range(0, len(decoded), per_sheet):
+        chunk = decoded[start : start + per_sheet]
         rows = (len(chunk) + cols - 1) // cols
         sheet = Image.new("RGBA", (cols * cw + pad, rows * ch + pad), bg)
         draw = ImageDraw.Draw(sheet)
-        for i, (img, label) in enumerate(chunk):
+        for i, (img, lines) in enumerate(chunk):
             r, c = divmod(i, cols)
             x = pad + c * cw
             y = pad + r * ch
             sheet.alpha_composite(img, (x, y))
-            draw.text((x + cell / 2, y + cell + 2), label, fill=(235, 235, 235, 255),
-                      font=font, anchor="ma")
+            ty = y + cell + 2
+            for ln in lines:
+                draw.text((x + cell / 2, ty), ln, fill=(235, 235, 235, 255),
+                          font=font, anchor="ma")
+                ty += line_h
         sheets.append(sheet.convert("RGB"))
     return sheets
